@@ -3,10 +3,16 @@
 (defun quake-make()
 "update progs.dat files."
   (interactive)
-  (copy-file "~/GitHub/Project-E/qwprogs.dat" "~/Quake/FTEQW/enoch/" t)
-  (with-help-window "qm-out"
+  (setq progslist '(
+                    "~/GitHub/Project-E/qwprogs.dat"
+                    "~/GitHub/Project-E/menu.dat"
+                    "~/GitHub/Project-E/csprogs.dat"))
+  (while progslist
+      (copy-file (car progslist) "~/Quake/FTEQW/enoch/" t)
+      (setq progslist (cdr progslist)))
+   (with-help-window "qm-out"
   (with-current-buffer(get-buffer-create "qm-out")
-   (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 > #<buffer qm-out>")
+   (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 +map test_weapons > #<buffer qm-out>")
    (pop-to-buffer "qm-out"'((display-buffer-at-bottom)
                              (inhibit-same-window . t)
    ))
