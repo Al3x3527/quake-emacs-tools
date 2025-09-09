@@ -10,10 +10,12 @@
   (while progslist
       (copy-file (car progslist) "~/Quake/FTEQW/enoch/" t)
       (setq progslist (cdr progslist)))
-   (with-help-window "qm-out"
+  (with-help-window "qm-out"
   (with-current-buffer(get-buffer-create "qm-out")
+    (print "progs copied.")
    (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 +map test_weapons > #<buffer qm-out>")
    (pop-to-buffer "qm-out"'((display-buffer-at-bottom)
                              (inhibit-same-window . t)
    ))
   )))
+;; if this doesn't work, try opening an eshell buffer manually, then close it.
