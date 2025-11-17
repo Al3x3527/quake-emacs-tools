@@ -20,40 +20,87 @@
     (insert-file-contents-literally file)
     (buffer-string)))
 
-(defun fgd-gen--detect-progs-src-type (file)
-  "Return (type . payload).
+;;; ---------------------------------------------------------------------------
+;;;  New FMF lookup logic
+;;; ---------------------------------------------------------------------------
 
-TYPE is 1 or 2.
-If type 2, PAYLOAD is list of #pragma sourcefile filenames.
-If type 1, PAYLOAD is the path from the first line."
+(defun fgd-gen--find-fmf-file (active-file)
+  "Return the single .fmf file found in active dir or one dir up.
+Error if zero or more than one found."
+  (let* ((dir (file-name-directory active-file))
+         (up (expand-file-name ".." dir))
+         (candidates (append (directory-files dir t "\\.fmf\\'")
+                             (directory-files up t "\\.fmf\\'"))))
+    (setq candidates (cl-delete-if-not #'file-regular-p candidates))
+    (cond
+     ((null candidates)
+      (error "No .fmf file found in %s or %s" dir up))
+     ((> (length candidates) 1)
+      (error "Multiple .fmf files found; expected only one: %S" candidates))
+     (t (car candidates)))))
+
+;;; ---------------------------------------------------------------------------
+;;;  New progs.src fallback logic
+;;; ---------------------------------------------------------------------------
+
+(defun fgd-gen--find-progs-src (active-file)
+  "Return the path to progs.src.
+1. Look in active directory.
+2. If not found, search one directory down (non-recursively)."
+  (let* ((base-dir (file-name-directory active-file))
+         (primary (expand-file-name "progs.src" base-dir)))
+    (cond
+     ((file-exists-p primary)
+      primary)
+     (t
+      ;; Search subdirectories one level down
+      (let* ((subs (cl-remove-if-not #'file-directory-p
+                                     (directory-files base-dir t "^[^.]" t)))
+             (found
+              (cl-loop for d in subs
+                       for candidate = (expand-file-name "progs.src" d)
+                       if (file-exists-p candidate)
+                       collect candidate)))
+        (cond
+         ((null found)
+          (error "progs.src not found in %s or its immediate subdirectories"
+                 base-dir))
+         ((> (length found) 1)
+          (error "Multiple progs.src found: %S" found))
+         (t (car found))))))))
+
+;;; ---------------------------------------------------------------------------
+;;;  progs.src type detection
+;;; ---------------------------------------------------------------------------
+
+(defun fgd-gen--detect-progs-src-type (file)
+  "Return (type . payload). TYPE = 1 or 2.
+
+Type 2: `#pragma sourcefile FILE.src` lines.
+Type 1: first line is a direct program file path."
   (with-temp-buffer
     (insert-file-contents file)
     (goto-char (point-min))
     (let ((first-line (string-trim (or (thing-at-point 'line t) ""))))
       (cond
-       ;; type 2 example: "#pragma sourcefile sv_progs.src"
        ((string-match "^#pragma[ \t]+sourcefile[ \t]+\\(.+\\)$" first-line)
         (let (files)
-          ;; Scan for all sourcefile pragmas
           (goto-char (point-min))
-          (while (re-search-forward "^#pragma[ \t]+sourcefile[ \t]+\\(.+\\)$" nil t)
+          (while (re-search-forward
+                  "^#pragma[ \t]+sourcefile[ \t]+\\(.+\\)$" nil t)
             (push (match-string 1) files))
           (cons 2 (nreverse files))))
-       ;; type 1 example: "../qwprogs.dat"
        (t
         (cons 1 first-line))))))
 
 (defun fgd-gen--sourcefiles-to-program-files (type payload base-dir)
-  "Convert TYPE/PAYLOAD from progs.src into list of program (.dat) file paths.
-
-BASE-DIR is the directory of the active file."
+  "Convert TYPE/PAYLOAD from progs.src into absolute .dat paths."
   (cl-case type
-    (2 ;; payload is list of .src files
+    (2
      (cl-loop for src in payload append
               (let* ((src-path (expand-file-name src base-dir)))
                 (unless (file-exists-p src-path)
                   (error "Sourcefile not found: %s" src-path))
-                ;; Each .src file contains a list of program .dat file paths.
                 (with-temp-buffer
                   (insert-file-contents src-path)
                   (cl-loop while (not (eobp))
@@ -62,81 +109,81 @@ BASE-DIR is the directory of the active file."
                            if (and (not (string-empty-p line))
                                    (not (string-prefix-p "#" line)))
                            collect (expand-file-name line (file-name-directory src-path)))))))
-    (1 ;; payload is a single .dat file path
+    (1
      (let ((dat (expand-file-name payload base-dir)))
        (unless (file-exists-p dat)
          (error "Program file not found: %s" dat))
        (list dat)))))
 
-(defun fgd-gen--extract-fgd-blocks (program-file)
-  "Return list of fgd strings extracted from PROGRAM-FILE.
+;;; ---------------------------------------------------------------------------
+;;;  Hardened FGD block extraction (no infinite loops)
+;;; ---------------------------------------------------------------------------
 
-Searches for literal \"@fgd\" followed by a space (optional) and
-copies text up to the next null byte ^@ (0)."
+(defun fgd-gen--extract-fgd-blocks (program-file)
+  "Return list of @fgd blocks from PROGRAM-FILE.
+
+Searches for '@fgd' with optional space, extracts until the next
+null byte. Loop is designed to always terminate even if the file
+is malformed or missing null bytes."
   (let* ((raw (fgd-gen--read-file-as-bytes program-file))
          (len (length raw))
          (start 0)
          results)
     (while (and start (< start len))
-      (setq start (string-match "@fgd ?" raw start))
-      (when start
-        (let* ((after (match-end 0))
-               (nil-pos (string-match "\0" raw after)))
-          (when nil-pos
-            (push (substring raw after nil-pos) results)
-            (setq start (1+ nil-pos))))))
+      ;; Look for @fgd
+      (let ((pos (string-match "@fgd ?" raw start)))
+        (if (not pos)
+            (setq start nil) ;; stop looping
+          (let* ((after (match-end 0))
+                 (nil-pos (string-match "\0" raw after)))
+
+            ;; If there is no null byte after '@fgd', stop scanning.
+            ;; (Cannot extract incomplete block.)
+            (if (not nil-pos)
+                (setq start nil)
+              ;; Extract block
+              (push (substring raw after nil-pos) results)
+              ;; Ensure strict forward progress
+              (setq start (max (1+ nil-pos) (1+ pos))))))))
     (nreverse results)))
 
-(defun fgd-gen--locate-fmf (active-file)
-  "Return the .fmf path associated with ACTIVE-FILE.
-
-Searches ACTIVE-FILE's directory, else ../<name>.fmf."
-  (let* ((dir (file-name-directory active-file))
-         (name (file-name-base active-file))
-         (same-dir (expand-file-name (concat name ".fmf") dir))
-         (up-dir (expand-file-name (concat "../" name ".fmf") dir)))
-    (cond
-     ((file-exists-p same-dir) same-dir)
-     ((file-exists-p up-dir) up-dir)
-     (t (error "No .fmf file found for %s" name)))))
+;;; ---------------------------------------------------------------------------
+;;;  Main interactive entry point
+;;; ---------------------------------------------------------------------------
 
 ;;;###autoload
 (defun fgd-gen-generate ()
-  "Generate <name>.fgd from the .dat files referenced by progs.src."
+  "Generate a .fgd file from all @fgd blocks in referenced .dat files."
   (interactive)
   (unless buffer-file-name
-    (error "This command must be run from a visiting file buffer"))
+    (error "Must run from a visiting file buffer"))
 
   (let* ((active-file buffer-file-name)
          (base-dir (file-name-directory active-file))
-         ;; Locate the .fmf file
-         (fmf (fgd-gen--locate-fmf active-file))
+         (fmf (fgd-gen--find-fmf-file active-file))
          (fgd (concat (file-name-sans-extension fmf) ".fgd"))
-         ;; Find progs.src in same directory
-         (progs-src (expand-file-name "progs.src" base-dir)))
-    (unless (file-exists-p progs-src)
-      (error "progs.src not found in %s" base-dir))
-
-    ;; Determine syntax type (1 or 2)
-    (pcase-let* ((`(,type . ,payload) (fgd-gen--detect-progs-src-type progs-src))
-                 (program-files (fgd-gen--sourcefiles-to-program-files type payload base-dir)))
-
-      ;; Extract fgd fragments from all program .dat files
+         (progs-src (fgd-gen--find-progs-src active-file)))
+    (pcase-let* ((`(,type . ,payload)
+                   (fgd-gen--detect-progs-src-type progs-src))
+                 (program-files
+                  (fgd-gen--sourcefiles-to-program-files type payload base-dir)))
+      ;; Gather all @fgd blocks
       (let (blocks)
         (dolist (pf program-files)
           (setq blocks (append blocks (fgd-gen--extract-fgd-blocks pf))))
 
-        ;; Write output
+        ;; Write .fgd
         (with-temp-file fgd
           (set-buffer-multibyte t)
           (dolist (blk blocks)
-            (insert blk)))           ; Insert raw without newlines.
+            (insert blk)))
 
-        ;; Display result in help window
+        ;; Show output
         (with-help-window "*FGD Output*"
           (with-current-buffer standard-output
             (insert-file-contents fgd)
             (goto-char (point-min))))
+
         (message "FGD written to: %s" fgd)))))
 
 (provide 'fgd-gen)
