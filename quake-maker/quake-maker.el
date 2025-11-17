@@ -13,7 +13,7 @@
   (with-help-window "qm-out"
   (with-current-buffer(get-buffer-create "qm-out")
     (print "progs copied.")
-   (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 +map test_weapons > #<buffer qm-out>")
+   (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 +map test_biped > #<buffer qm-out>")
    (pop-to-buffer "qm-out"'((display-buffer-at-bottom)
                              (inhibit-same-window . t)
    ))
