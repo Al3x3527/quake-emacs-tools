@@ -188,3 +188,27 @@ is malformed or missing null bytes."
 
 (provide 'fgd-gen)
 ;;; fgd-gen.el ends here
+
+;;
+;;get the beginning of a class
+;;NOTE first line of class starts with a class type "@BaseClass", "@PointClass", or "@SolidClass"
+;;the class type is followed by some optional statements, then "= <class name> : <description>"
+;;the ": <description>" is optional
+;;the description is usually followed by a new line with only an open square bracket
+;;ex: @PointClass size(-8 -8 -12, 8 8 12) = light :\n"lightsource"\n [
+;;this top matter is often in-line, but is not sensitive to new lines
+;;
+;;get the end of that class: the line before the first line of the next class or eof.
+;;check for lines containing top matter in body of class
+;;NOTE the body of the class is anything after the open square bracket
+;;"model(<code>)", "base(<bases>)", "color(<rgb>)", or "size(<size>)" are top matter
+;;each are optionally defined once per class
+;;
+;;move each top matter statement from the body of the class to the top matter
+;;without leaving empty lines in their place
+;;NOTE order of these statements does not matter as long as they are between the class type and "="
+;;
+;;add a new line to the end of the class which closes the square brackets if necessary
+;;do this process for each class in the generated fgd.
+;;NOTE pairs of square brackets may be used in other ways in fgd file.
+;;
