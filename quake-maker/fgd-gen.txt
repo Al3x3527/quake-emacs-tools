@@ -2,7 +2,7 @@
 ;;
 ;; Copyright (C) 2025 Alex
 ;; Version: 0.0
-;; Package-Requires: ((emacs "24.4") (cl-lib "0.5"))
+;; Package-Requires: ((emacs "24.3") (cl-lib "0.5"))
 ;;
 ;;; Commentary:
 ;;
@@ -100,7 +100,7 @@ Signal an error if none or multiple candidates."
         (cond
          ((null found) (error "progs.src not found in %s or its immediate subdirectories" base-dir))
          ((> (length found) 1) (error "Multiple progs.src found: %S" found))
-         (t (car found))))))))
+         (t (car found)))))))
 
 ;; -------------------------------------------------------------------
 ;; progs.src parsing
@@ -212,25 +212,25 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
                         (when (string-match (concat "\\_<" (regexp-quote name) "\\_>\\s-*(") header)
                           name))
                       wanted)))
-         (top-tokens '()))
+         (found-tokens '()))
 
     ;; Extract first occurrences of wanted tokens from the body
     (when (not (string-empty-p (string-trim body)))
       (with-temp-buffer
         (insert body)
         (goto-char (point-min))
-        ;; Search for tokens by name; when found, capture until next and delete it.
+        ;; Search for tokens by name; when found, capture until next ')' and delete it.
         ;; Only keep first occurrence per name and skip names present in header.
         (while (re-search-forward "\\_<\\(model\\|base\\|color\\|size\\)\\_>\\s-*(" nil t)
           (let* ((name (match-string 1))
                  (start (match-beginning 0)))
-            ;; find matching - simple heuristic: next character (we assume balanced usage inside)
+            ;; find matching ')' - simple heuristic: next ')' character (we assume balanced usage inside)
             (if (re-search-forward "\\)" nil t)
                 (let ((end (point)))
                   ;; If header already has name or we already found it, skip capturing
-                  (unless (or (member name header-has) (member name top-tokens))
+                  (unless (or (member name header-has) (member name found-tokens))
                     (let ((token (string-trim (buffer-substring-no-properties start end))))
-                      (push token top-tokens)))
+                      (push token found-tokens)))
                   ;; delete region and tidy up whitespace/empty lines
                   (goto-char start)
                   (delete-region start end)
@@ -245,7 +245,7 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
               ;; no closing paren - avoid infinite loop by moving past start
               (goto-char (1+ start))))))
         (setq body (string-trim (buffer-string)))
-        (setq found-tokens (nreverse top-tokens))))
+        (setq found-tokens (nreverse found-tokens)))))
 
     ;; Build insertion tokens excluding those that header already had
     (let* ((tokens-to-insert
@@ -253,7 +253,7 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
              (lambda (tok)
                (let ((name (car (split-string tok "("))))
                  (member name header-has)))
-             found-tokens)) ;;whichever symbol is used here is named in the error.
+             found-tokens))
            (tokens-str (when tokens-to-insert
                          (mapconcat #'fgd-gen--normalize-space tokens-to-insert " "))))
 
@@ -315,7 +315,7 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
                     ;; Always normalize to have a single closing bracket line at the end
                     (setq built (concat (string-trim-right built) "\n  ]"))
                     built))))
-          assembled))))
+          assembled)))))
 
 ;; -------------------------------------------------------------------
 ;; apply improvement to .fgd file: find classes and process them
@@ -357,7 +357,7 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
           (setq out (concat out (substring text (or (cadr (last regions)) (point-min)) (length text))))
           ;; write back and return
           (fgd-gen--write-text-file fgd-file out)
-          out)))))
+          out))))
 
 
 ;; -------------------------------------------------------------------
