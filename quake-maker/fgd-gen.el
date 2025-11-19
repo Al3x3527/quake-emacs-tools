@@ -41,24 +41,24 @@
       (setq i (1- i)))
     (= (mod count 2) 1)))
 
-(defun fgd-gen--find-first-unquoted (string char &optional start)
-  "Return index of CHAR in STRING at or after START that is not inside double quotes.
-If not found, return nil. START defaults to 0.
+(defun fgd-gen--find-first-unquoted (str char start)
+  "Return index of CHAR in STR starting at START, ignoring text in double quotes.
+Return nil if no unquoted CHAR is found."
+  (cl-block find
+    (let ((len (length str))
+          (i start)
+          (in-string nil))
+      (while (< i len)
+        (let ((c (aref str i)))
+          (cond
+           ((= c ?\")        ;; toggle string flag
+            (setq in-string (not in-string)))
 
-This treats `\"` as an escaped quote and ignores characters inside double-quoted strings."
-  (let* ((len (length string))
-         (i (or start 0))
-         (in-quote nil))
-    (while (< i len)
-      (let ((c (aref string i)))
-        (cond
-         ((eq c ?\")                        ; toggle quote (unless escaped)
-          (unless (fgd-gen--escaped-p string i)
-            (setq in-quote (not in-quote))))
-         ((and (not in-quote) (eq c char))
-          (cl-return-from fgd-gen--find-first-unquoted i))))
-      (setq i (1+ i)))
-    nil))
+           ((and (not in-string)
+                 (= c char))
+            (cl-return-from find i))))
+        (setq i (1+ i)))
+      nil)))  ;; default return value
 
 ;; -------------------------------------------------------------------
 ;; locate files (fmf / progs.src)
