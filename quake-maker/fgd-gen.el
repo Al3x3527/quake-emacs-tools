@@ -304,42 +304,52 @@ and ensures opening/closing bracket lines."
 ;; -------------------------------------------------------------------
 
 (defun fgd-gen--improve-fgd-syntax (fgd-file)
-  "Read FGD-FILE, process each class region, overwrite file, and return new content."
-  (let* ((text (with-temp-buffer (insert-file-contents fgd-file) (buffer-string)))
-         (class-re "\\(?:^\\|\\n\\)\\s-*@[ \t]*\\(BaseClass\\|PointClass\\|SolidClass\\)\\_>")
+  "Read FGD-FILE, process each class region, overwrite file, and return new content.
+
+Processes each class independently, moves top-matter from body into header,
+normalizes whitespace, indents body lines, and ensures balanced brackets."
+  (let* ((text (with-temp-buffer (insert-file-contents fgd-file)
+                 (buffer-string)))
+         ;; match @ClassType at start of line (or after newline)
+         (class-re "^[ \t]*@[ \t]*\\(BaseClass\\|PointClass\\|SolidClass\\)\\_>")
          (pos 0)
          (matches '()))
-    ;; collect start indices of classes
-    (while (and (< pos (length text))
-                (string-match class-re text pos))
+    ;; Collect start indices of all classes
+    (while (string-match class-re text pos)
       (push (match-beginning 0) matches)
-      (setq pos (1+ (match-beginning 0))))
+      ;; advance past this match to avoid overlap
+      (setq pos (match-end 0)))
     (setq matches (nreverse matches))
-    (if (null matches)
-        ;; no classes; write text back unchanged and return it
-        (progn
-          (fgd-gen--write-text-file fgd-file text)
-          text)
-      ;; otherwise build regions from starts
-      (let ((regions '()))
-        (dotimes (i (length matches))
-          (let* ((s (nth i matches))
-                 (e (if (< i (1- (length matches))) (nth (1+ i) matches) (length text))))
-            (push (cons s e) regions)))
-        (setq regions (nreverse regions))
-        ;; assemble output
-        (let ((out "")
-              (cursor 0))
-          (dolist (reg regions)
-            (let ((s (car reg)) (e (cdr reg)))
-              (setq out (concat out (substring text cursor s)))
-              (let ((class-text (substring text s e)))
-                (setq out (concat out (fgd-gen--process-single-class class-text))))
-              (setq cursor e)))
-          (setq out (concat out (substring text (or (cadr (last regions)) (point-min)) (length text))))
-          ;; write back and return
-          (fgd-gen--write-text-file fgd-file out)
-          out)))))
+
+    ;; Build regions: each region starts at a class header, ends at next header or eof
+    (let ((regions '())
+          (n (length matches)))
+      (dotimes (i n)
+        (let ((s (nth i matches))
+              (e (if (< i (1- n))
+                     (nth (1+ i) matches)
+                   (length text))))
+          (push (cons s e) regions)))
+      (setq regions (nreverse regions))
+
+      ;; Assemble output: preserve text between classes
+      (let ((out "")
+            (cursor 0))
+        (dolist (reg regions)
+          (let ((s (car reg)) (e (cdr reg)))
+            ;; append any text between previous cursor and this class
+            (when (< cursor s)
+              (setq out (concat out (substring text cursor s))))
+            ;; process this class
+            (let ((class-text (substring text s e)))
+              (setq out (concat out (fgd-gen--process-single-class class-text) "\n")))
+            (setq cursor e)))
+        ;; append any remaining text after last class
+        (when (< cursor (length text))
+          (setq out (concat out (substring text cursor))))
+        ;; write back to file and return
+        (fgd-gen--write-text-file fgd-file out)
+        out))))
 
 
 ;; -------------------------------------------------------------------
