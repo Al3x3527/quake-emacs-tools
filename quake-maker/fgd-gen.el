@@ -187,15 +187,30 @@ The function is defensive and always advances; if a block is incomplete (no NUL)
   "Trim S and collapse runs of whitespace within to a single space."
   (replace-regexp-in-string "[ \t\n\r]+" " " (string-trim s)))
 
+(defun fgd-gen--find-matching-paren (text pos)
+  "Return index of closing parenthesis matching opening at POS in TEXT.
+POS should point at the opening '('. Returns nil if not found."
+  (let ((depth 1)
+        (i (1+ pos))
+        (len (length text))
+        (in-string nil))
+    (while (and (< i len) (> depth 0))
+      (let ((c (aref text i)))
+        (cond
+         ((= c ?\") (setq in-string (not in-string)))
+         ((and (not in-string) (= c ?\()) (setq depth (1+ depth)))
+         ((and (not in-string) (= c ?\))) (setq depth (1- depth)))))
+      (setq i (1+ i)))
+    (if (= depth 0) (1- i) nil)))
+
 (defun fgd-gen--process-single-class (class-text)
   "Process CLASS-TEXT and return transformed class text.
 
 Moves first occurrences of model(...), base(...), color(...), size(...)
-from the body into the header if the header doesn't already contain them.
-Preserves multi-line header, ignores bracket characters inside quoted strings,
-normalizes spacing, indents the body, and ensures a closing ']' exists."
+from the body into the header if not already present, preserving
+multi-line headers, normalizing whitespace, indenting the body, and
+ensuring balanced brackets."
   (let* ((wanted '("model" "base" "color" "size"))
-         ;; locate first unquoted '[' which marks header/body split
          (bracket-pos (fgd-gen--find-first-unquoted class-text ?\[ 0))
          (header (if bracket-pos
                      (string-trim-right (substring class-text 0 bracket-pos))
@@ -203,111 +218,65 @@ normalizes spacing, indents the body, and ensures a closing ']' exists."
          (body (if bracket-pos
                    (substring class-text (1+ bracket-pos) (length class-text))
                  ""))
-         ;; tokens already present in header (names only)
+         ;; top-matter already in header
          (header-has
           (cl-remove-if-not
            #'identity
-           (mapcar (lambda (name)
-                     (when (string-match (concat "\\_<" (regexp-quote name) "\\_>\\s-*(") header)
-                       name))
-                   wanted)))
-         ;; collect tokens (full "model(...)" strings) found in body, in order
-         (top-tokens '()))
+           (cl-mapcar (lambda (name)
+                        (when (string-match (concat "\\_<" (regexp-quote name) "\\_>") header)
+                          name))
+                      wanted)))
+         (top-tokens '())
+         (body-pos 0)
+         (body-len (length body)))
 
-    ;; scan the body and pick up first occurrence of each wanted token
-    (when (not (string-empty-p (string-trim body)))
-      (with-temp-buffer
-        (insert body)
-        (goto-char (point-min))
-        ;; find token name, then capture run up to next ')' (heuristic)
-        (while (re-search-forward "\\_<\\(model\\|base\\|color\\|size\\)\\_>\\s-*(" nil t)
-          (let* ((name (match-string 1))
-                 (start (match-beginning 0)))
-            (if (re-search-forward "\\)" nil t)
-                (let ((end (point)))
-                  ;; only take first per name and only if header doesn't already have it
-                  (unless (or (member name header-has) (member name (mapcar (lambda (t) (car (split-string t "("))) top-tokens)))
-                    (push (string-trim (buffer-substring-no-properties start end)) top-tokens))
-                  ;; delete the token text and tidy whitespace/empty lines
-                  (goto-char start)
-                  (delete-region start end)
-                  (delete-horizontal-space)
-                  (when (and (looking-at "^[ \t]*$")
-                             (< (point) (point-max)))
-                    (let ((lb (line-beginning-position))
-                          (le (line-end-position)))
-                      (delete-region lb (min (1+ le) (point-max)))))
-                  (goto-char (max 1 start)))
-              ;; no closing paren - move forward to avoid infinite loop
-              (goto-char (1+ start))))))
-        (setq body (string-trim (buffer-string)))
-        ;; restore order found in body
-        (setq top-tokens (nreverse top-tokens)))
+    ;; --- extract first occurrences of wanted tokens from body ---
+    (while (< body-pos body-len)
+      (let ((found nil))
+        (dolist (name wanted)
+          (when (and (not (member name header-has))
+                     (not (member name top-tokens)))
+            (let ((idx (string-match (concat "\\_<" (regexp-quote name) "\\_>\\s-*(") body body-pos)))
+              (when idx
+                (let ((end (fgd-gen--find-matching-paren body (+ idx (length name) 0)))) ; pos at '('
+                  (when end
+                    (push (string-trim (substring body idx (1+ end))) top-tokens)
+                    ;; remove from body
+                    (setq body (concat (substring body 0 idx) (substring body (1+ end))))
+                    (setq body-len (length body))
+                    (setq found t)
+                    (cl-return))))))))
+        (unless found
+          (setq body-pos (1+ body-pos)))) ; advance to avoid infinite loop
 
-    ;; tokens to insert are the tokens we found (but only those whose name is not in header)
-    (let* ((tokens-to-insert
-            (cl-remove-if
-             (lambda (tok)
-               (let ((name (car (split-string tok "("))))
-                 (member name header-has)))
-             top-tokens))
-           (tokens-str (when tokens-to-insert
-                         (mapconcat #'fgd-gen--normalize-space tokens-to-insert " ")))
-           (new-header header))
+    (setq top-tokens (nreverse top-tokens))
 
-      ;; insert tokens before first unquoted '=' or append to header end
+    ;; --- insert tokens into header before first unquoted '=' ---
+    (let ((tokens-str (when top-tokens
+                        (mapconcat #'fgd-gen--normalize-space top-tokens " ")))
+          (new-header header))
       (when (and tokens-str (not (string-empty-p tokens-str)))
         (let ((eq-pos (fgd-gen--find-first-unquoted new-header ?= 0)))
           (if (null eq-pos)
               (setq new-header (concat (string-trim-right new-header) " " tokens-str))
-            ;; put tokens before '='; if '=' is alone on a line, append to previous non-empty line
-            (let* ((line-start (let ((p eq-pos))
-                                 (while (and (> p 0) (not (eq (aref new-header (1- p)) ?\n)))
-                                   (setq p (1- p)))
-                                 p))
-                   (line-end (or (string-match "\n" new-header line-start) (length new-header)))
-                   (line-text (string-trim (substring new-header line-start line-end))))
-              (if (string-match-p "^=" (string-trim-left line-text))
-                  (let ((prev-end (1- line-start)))
-                    (if (< prev-end 0)
-                        (setq new-header (concat (substring new-header 0 eq-pos) " " tokens-str (substring new-header eq-pos)))
-                      (let ((prev-start
-                             (let ((p prev-end))
-                               ;; skip trailing newlines
-                               (while (and (>= p 0) (eq (aref new-header p) ?\n)) (setq p (1- p)))
-                               ;; find start of that previous line
-                               (while (and (>= p 0) (not (eq (aref new-header p) ?\n))) (setq p (1- p)))
-                               (1+ p)))))
-                        (setq new-header
-                              (concat (substring new-header 0 prev-start)
-                                      (string-trim-right (substring new-header prev-start line-start))
-                                      " "
-                                      tokens-str
-                                      (substring new-header line-start)))))
-                (setq new-header (concat (substring new-header 0 eq-pos) " " tokens-str (substring new-header eq-pos))))))))
+            ;; insert tokens before '='
+            (setq new-header (concat (substring new-header 0 eq-pos) " " tokens-str (substring new-header eq-pos)))))))
 
-      ;; normalize header whitespace (but don't remove newlines)
-      (setq new-header (replace-regexp-in-string "[ \t]+" " " new-header))
-      (setq new-header (replace-regexp-in-string " \\(\n\\)" "\\1" new-header))
-      (setq new-header (replace-regexp-in-string "\\(\n\\) " "\\1" new-header))
-
-      ;; format body: indent lines and ensure bracket lines
-      (let* ((body-lines (if (string-empty-p (string-trim body))
-                             nil
-                           (split-string body "\n" t)))
-             (indented-body (if body-lines
-                                (mapconcat (lambda (ln) (concat "  " (string-trim-right ln))) body-lines "\n")
-                              ""))
-             (has-close (and bracket-pos (fgd-gen--find-first-unquoted class-text ?\] (1+ (or bracket-pos 0)))))
-             (assembled
-              (if (string-empty-p indented-body)
-                  (string-trim-right new-header)
-                (let ((b (concat (string-trim-right new-header) "\n  [\n" indented-body)))
-                  (unless has-close (setq b (concat b "\n  ]")))
-                  ;; normalize to single closing bracket line
-                  (setq b (concat (string-trim-right b) "\n  ]"))
-                  b))))
-        assembled))))
+    ;; --- prepare body: indent, ensure bracket lines, ensure closing bracket ---
+    (let* ((body-lines (if (string-empty-p (string-trim body))
+                           nil
+                         (split-string body "\n" t)))
+           (indented-body (if body-lines
+                              (mapconcat (lambda (ln) (concat "  " (string-trim-right ln))) body-lines "\n")
+                            ""))
+           (assembled
+            (if (string-empty-p indented-body)
+                (string-trim-right new-header)
+              ;; body exists -> ensure opening and closing bracket lines
+              (let ((built (concat (string-trim-right new-header) "\n  [\n" indented-body)))
+                (setq built (concat (string-trim-right built) "\n  ]"))
+                built))))
+      assembled)))
 
 ;; -------------------------------------------------------------------
 ;; apply improvement to .fgd file: find classes and process them
