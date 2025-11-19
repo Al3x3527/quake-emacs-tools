@@ -282,88 +282,53 @@ indent body, and ensure exactly one pair of brackets."
                      indented-body
                      "\n  ]"))))))))
 
-;; -------------------------------------------------------------------
-;; apply improvement to .fgd file: find classes and process them
-;; -------------------------------------------------------------------
+(defun fgd-gen--improve-fgd-syntax (fgd-file)
+  "Read FGD-FILE, process each class region, overwrite file, and return new content.
 
-(defun fgd-gen--process-single-class (class-text)
-  "Process CLASS-TEXT, normalize header, move top-matter from body to header,
-indent body, and ensure exactly one pair of brackets."
-  (let* ((wanted '("model" "base" "color" "size"))
-         ;; find first unquoted '['
-         (bracket-pos (fgd-gen--find-first-unquoted class-text ?\[ 0))
-         (header (if bracket-pos
-                     (string-trim-right (substring class-text 0 bracket-pos))
-                   (string-trim-right class-text)))
-         (body (if bracket-pos
-                   (substring class-text (1+ bracket-pos))
-                 "")))
+Processes each class independently, moves top-matter from body into header,
+normalizes whitespace, indents body lines, and ensures balanced brackets."
+  (let* ((text (with-temp-buffer (insert-file-contents fgd-file)
+                 (buffer-string)))
+         ;; match @ClassType at start of line (or after newline)
+         (class-re "^[ \t]*@[ \t]*\\(BaseClass\\|PointClass\\|SolidClass\\)\\_>")
+         (pos 0)
+         (matches '()))
+    ;; Collect start indices of all classes
+    (while (string-match class-re text pos)
+      (push (match-beginning 0) matches)
+      ;; advance past this match to avoid overlap
+      (setq pos (match-end 0)))
+    (setq matches (nreverse matches))
 
-    ;; collect existing header tokens
-    (let ((header-has
-           (cl-remove-if-not
-            #'identity
-            (cl-mapcar (lambda (name)
-                         (when (string-match (concat "\\_<" (regexp-quote name) "\\_>\\s-*(") header)
-                           name))
-                       wanted)))
-          (top-tokens '()))
+    ;; Build regions: each region starts at a class header, ends at next header or eof
+    (let ((regions '())
+          (n (length matches)))
+      (dotimes (i n)
+        (let ((s (nth i matches))
+              (e (if (< i (1- n))
+                     (nth (1+ i) matches)
+                   (length text))))
+          (push (cons s e) regions)))
+      (setq regions (nreverse regions))
 
-      ;; extract first occurrences of wanted tokens from body
-      (when (not (string-empty-p (string-trim body)))
-        (with-temp-buffer
-          (insert body)
-          (goto-char (point-min))
-          (while (re-search-forward
-                  "\\_<\\(model\\|base\\|color\\|size\\)\\_>\\s-*\\((\\(?:.\\|\n\\)*?\\))"
-                  nil t)
-            (let* ((name (match-string 1))
-                   (token (string-trim (match-string 0))))
-              ;; only first occurrence per name and not in header
-              (unless (or (member name header-has) (member name top-tokens))
-                (push token top-tokens))
-              ;; delete the matched token
-              (delete-region (match-beginning 0) (match-end 0))
-              (delete-horizontal-space)))
-          (setq body (string-trim (buffer-string)))))
-
-      (setq top-tokens (nreverse top-tokens))
-
-      ;; insert tokens into header before first '='
-      (let ((new-header header))
-        (when top-tokens
-          (let ((tokens-str (mapconcat #'identity top-tokens " "))
-                (eq-pos (fgd-gen--find-first-unquoted new-header ?= 0)))
-            (if eq-pos
-                ;; insert before '='
-                (setq new-header (concat (substring new-header 0 eq-pos)
-                                         " "
-                                         tokens-str
-                                         (substring new-header eq-pos)))
-              ;; append if no '='
-              (setq new-header (concat new-header " " tokens-str)))))
-
-        ;; normalize spaces in header but preserve newlines
-        (setq new-header (replace-regexp-in-string "[ \t]+" " " new-header))
-        (setq new-header (replace-regexp-in-string " \\(\n\\)" "\\1" new-header))
-        (setq new-header (replace-regexp-in-string "\\(\n\\) " "\\1" new-header))
-
-        ;; format body
-        (let* ((body-lines (if (string-empty-p body)
-                               nil
-                             (split-string body "\n" t)))
-               (indented-body (if body-lines
-                                  (mapconcat (lambda (ln) (concat "  " (string-trim-right ln)))
-                                             body-lines "\n")
-                                "")))
-          ;; assemble final class
-          (concat
-           new-header
-           (if (string-empty-p indented-body)
-               ""
-             (concat "\n  [\n"
-                     indented-body
-                     "\n  ]"))))))))
+      ;; Assemble output: preserve text between classes
+      (let ((out "")
+            (cursor 0))
+        (dolist (reg regions)
+          (let ((s (car reg)) (e (cdr reg)))
+            ;; append any text between previous cursor and this class
+            (when (< cursor s)
+              (setq out (concat out (substring text cursor s))))
+            ;; process this class
+            (let ((class-text (substring text s e)))
+              (setq out (concat out (fgd-gen--process-single-class class-text) "\n")))
+            (setq cursor e)))
+        ;; append any remaining text after last class
+        (when (< cursor (length text))
+          (setq out (concat out (substring text cursor))))
+        ;; write back to file and return
+        (fgd-gen--write-text-file fgd-file out)
+        out))))
 
 
 ;; -------------------------------------------------------------------
