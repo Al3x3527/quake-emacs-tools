@@ -357,6 +357,7 @@ Run this from a buffer visiting a file inside the project."
         (fgd-gen--write-text-file fgd (mapconcat #'identity blocks ""))
         ;; improve syntax in-place
         (let ((new-content (fgd-gen--improve-fgd-syntax fgd)))
+          (copy-file fgd "~/Quake/FTEQW/" t) ;;the only line not vibe coded.
           (with-help-window "*FGD Output*"
             (with-current-buffer standard-output
               (insert new-content)
