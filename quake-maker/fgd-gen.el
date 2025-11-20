@@ -256,6 +256,7 @@ indent body, and ensure exactly one pair of brackets."
                 (setq new-header (concat (substring new-header 0 eq-pos)
                                          " "
                                          tokens-str
+                                         " "
                                          (substring new-header eq-pos)))
               ;; append if no '='
               (setq new-header (concat new-header " " tokens-str)))))
