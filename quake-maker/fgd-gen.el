@@ -278,7 +278,7 @@ indent body, and ensure exactly one pair of brackets."
           (concat
            new-header
            (if (string-empty-p indented-body)
-               ""
+               " [ ]"
              (concat "\n  [\n"
                      indented-body
                      "\n  ]"))))))))
