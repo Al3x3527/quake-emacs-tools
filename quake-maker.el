@@ -2,18 +2,19 @@
 
 (defun quake-make()
 "update progs.dat files."
-  (interactive)
+(interactive)
+;(setq gamedirpath '("~/Programs/project_enoch/FTEQW/enoch"))
   (setq progslist '(
                     "~/GitHub/Project-E/qwprogs.dat"
                     "~/GitHub/Project-E/menu.dat"
                     "~/GitHub/Project-E/csprogs.dat"))
   (while progslist
-      (copy-file (car progslist) "~/Quake/FTEQW/enoch/" t)
+      (copy-file (car progslist) "~/Programs/project_enoch/FTEQW/enoch/" t)
       (setq progslist (cdr progslist)))
   (with-help-window "qm-out"
   (with-current-buffer(get-buffer-create "qm-out")
     (print "progs copied.")
-   (eshell-command "cd ~/Quake/FTEQW/ && ./fteqw64 +map test_biped > #<buffer qm-out>")
+   (eshell-command "cd ~/Programs/project_enoch/FTEQW/ && ./fteqw64 +map test_biped > #<buffer qm-out>")
    (pop-to-buffer "qm-out"'((display-buffer-at-bottom)
                              (inhibit-same-window . t)
    ))
