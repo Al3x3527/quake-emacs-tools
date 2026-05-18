@@ -1,43 +1,58 @@
 ;;; quake-maker.el -*- lexical-binding: t; -*-
 
-;;TODO make sure we can load quake config
 (load-file "/home/alex/GitHub/Project-E/quake.el")
-(require 'quake)
+;(require 'quake)
 
-(defun quake-copy-progs()
-  "update progs.dat files."
+(defun quake-output-buffer ()
+  (get-buffer-create "*quake-output*"))
+
+(defun quake-copy-progs ()
+  "Copy Quake progs files."
   (interactive)
 
-;;; copy mod files
-  (let* (target-dir (expand-file-name quake-moddirpath quake-gamedirpath)))
-  (dolist (file quake-progslist)
-    (let ((src (expand-file-name file quake-project))
-          (dst (expand-file-name file target-dir))
-          (copy-file src dst t)
-          (with-current-buffer "qm-out"
-            (insert file " copied."))))))
-(provide 'quake-copy-progs)
+  (let ((target-dir
+         (expand-file-name
+          quake-moddirpath
+          quake-gamedirpath)))
 
-;;; run game
+    (dolist (file quake-progslist)
+
+      (let ((src (expand-file-name file quake-project))
+            (dst (expand-file-name file target-dir)))
+
+        (copy-file src dst t)
+
+        (with-current-buffer (quake-output-buffer)
+          (goto-char (point-max))
+          (insert (format "%s copied\n" file)))))))
+
 (defun quake-run-engine ()
-  "run Quake engine from cmd line."
+  "Run Quake engine."
   (interactive)
-    (let ((default-directory quake-gamedirpath))
-      (eshell-command
-       (concat "./" quake-engine " " quake-launch-args)
-       "qm-out")))
-; FIXME: eshell output inserted at point in current buffer
-(provide 'quake-run-engine)
+
+  (let* ((default-directory quake-gamedirpath)
+         (buffer (quake-output-buffer))
+         (exe (expand-file-name
+               quake-engine
+               quake-gamedirpath)))
+
+    (apply #'start-process
+           "quake-engine"
+           buffer
+           exe
+           quake-launch-args)
+
+    (pop-to-buffer buffer)));
 
 ;;; test game
 (defun quake-test ()
   "update progs and run Quake engine."
   (interactive)
-  (with-current-buffer "qm-out"
+  (with-current-buffer (quake-output-buffer)
     (erase-buffer))
   (quake-copy-progs)
   (quake-run-engine)
-  (pop-to-buffer "qm-out" '((display-buffer-at-bottom))))
+  (pop-to-buffer "*quake-output*" '((display-buffer-at-bottom))))
 (provide 'quake-test)
 
 ;;; quake-maker.el ends here
