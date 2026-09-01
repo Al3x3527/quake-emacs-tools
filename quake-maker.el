@@ -26,11 +26,6 @@
           (goto-char (point-max))
           (insert (format "%s copied\n" file)))))))
 
-(defun quake-compile-and-copy-progs ()
-  "run quakec-compile and copy progs."
-  (quakec-compile)
-  (quake-copy-progs))
-
 (defun quake-run-engine ()
   "Run Quake engine."
   (interactive)
