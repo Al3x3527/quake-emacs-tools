@@ -1,7 +1,7 @@
 ;;; quake-maker.el -*- lexical-binding: t; -*-
 
-(load-file "/home/alex/GitHub/Project-E/quake.el")
-;(require 'quake)
+;;(load-file "/home/alex/Projects/Project-E/quake.el")
+(require 'quakec-mode)
 
 (defun quake-output-buffer ()
   (get-buffer-create "*quake-output*"))
@@ -25,6 +25,11 @@
         (with-current-buffer (quake-output-buffer)
           (goto-char (point-max))
           (insert (format "%s copied\n" file)))))))
+
+(defun quake-compile-and-copy-progs ()
+  "run quakec-compile and copy progs."
+  (quakec-compile)
+  (quake-copy-progs))
 
 (defun quake-run-engine ()
   "Run Quake engine."
